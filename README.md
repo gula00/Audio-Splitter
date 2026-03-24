@@ -1,8 +1,12 @@
-﻿# Audio Splitter GUI
+﻿# Audio Splitter
 
 [中文说明](./README.zh-CN.md)
 
 A lightweight Rust + WASAPI tool for Windows that duplicates system playback audio to an extra output line (for example `CABLE Input`), while keeping your original speaker/headphone playback.
+
+## Demo
+
+![Audio Splitter Demo](./assets/demo.png)
 
 ## Features
 
@@ -41,6 +45,20 @@ Recommended setup:
 
 ```bash
 cargo run --release
+```
+
+## Release EXE (GitHub Releases)
+
+This repo includes a GitHub Actions workflow: `.github/workflows/release.yml`.
+
+- Trigger: push a tag like `v0.1.0`
+- Output asset: `audio-splitter-gui.exe` attached to the GitHub Release
+
+Example:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ## Routing Notes
