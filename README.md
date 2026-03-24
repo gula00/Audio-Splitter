@@ -47,20 +47,6 @@ Recommended setup:
 cargo run --release
 ```
 
-## Release EXE (GitHub Releases)
-
-This repo includes a GitHub Actions workflow: `.github/workflows/release.yml`.
-
-- Trigger: push a tag like `v0.1.0`
-- Output asset: `audio-splitter-gui.exe` attached to the GitHub Release
-
-Example:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
 ## Routing Notes
 
 - This app does not create virtual devices by itself. It uses devices already present in Windows.

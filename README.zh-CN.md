@@ -47,20 +47,6 @@
 cargo run --release
 ```
 
-## 发布 EXE（GitHub Releases）
-
-仓库已包含自动发布工作流：`.github/workflows/release.yml`。
-
-- 触发方式：推送形如 `v0.1.0` 的 tag
-- 产物：`audio-splitter-gui.exe` 会自动挂到 Release 附件
-
-示例：
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
 ## 路由说明
 
 - 本项目不会自动创建虚拟设备，只会使用系统中已存在的设备。
