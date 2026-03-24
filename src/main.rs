@@ -22,7 +22,12 @@ mod app {
     const HISTORY_LEN: usize = 180;
 
     pub fn run() -> Result<()> {
-        let options = eframe::NativeOptions::default();
+        let options = eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default()
+                .with_inner_size([520.0, 320.0])
+                .with_min_inner_size([420.0, 260.0]),
+            ..Default::default()
+        };
         eframe::run_native(
             "Audio Splitter",
             options,
@@ -119,38 +124,32 @@ mod app {
             let (in_level, out_level) = self.update_histories();
 
             egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("Audio Splitter");
-                ui.label("Input and output are shown as two columns. Running state draws a link line.");
-
                 ui.horizontal(|ui| {
+                    let label = if self.bridge.is_running() { "Stop" } else { "Start" };
+                    if ui.add_sized([100.0, 30.0], egui::Button::new(label)).clicked() {
+                        self.toggle();
+                    }
                     if ui.button("Refresh").clicked() {
                         self.refresh_devices();
                     }
-
+                });
+                ui.horizontal(|ui| {
                     let selected_text = self
                         .devices
                         .get(self.selected)
                         .map(|s| s.as_str())
                         .unwrap_or("<no device>");
-
-                    egui::ComboBox::from_label("Output device")
+                    egui::ComboBox::from_id_salt("target-device-compact")
+                        .width(ui.available_width().max(80.0))
                         .selected_text(selected_text)
                         .show_ui(ui, |ui| {
                             for (i, name) in self.devices.iter().enumerate() {
                                 ui.selectable_value(&mut self.selected, i, name);
                             }
                         });
-
-                    let label = if self.bridge.is_running() { "Stop" } else { "Start" };
-                    if ui
-                        .add_sized([120.0, 30.0], egui::Button::new(label))
-                        .clicked()
-                    {
-                        self.toggle();
-                    }
                 });
 
-                ui.add_space(8.0);
+                ui.add_space(2.0);
                 draw_flow_panel(
                     ui,
                     self.bridge.is_running(),
@@ -162,10 +161,6 @@ mod app {
                     &self.output_history,
                     ctx.input(|i| i.time) as f32,
                 );
-
-                ui.add_space(8.0);
-                ui.label(format!("Status: {}", self.status));
-                ui.label("Virtual cable route example: app output -> CABLE Input, chat mic -> CABLE Output.");
             });
         }
 
@@ -402,18 +397,31 @@ mod app {
         time: f32,
     ) {
         let width = ui.available_width();
-        let height = 250.0;
+        let desired_height: f32 = 220.0;
+        let height = desired_height.min(ui.available_height().max(90.0));
         let (response, painter) = ui.allocate_painter(Vec2::new(width, height), Sense::hover());
         let rect = response.rect;
 
         let outer = rect.shrink2(Vec2::new(8.0, 8.0));
-        let gap = 78.0;
-        let card_w = ((outer.width() - gap).max(240.0)) * 0.5;
-        let left = Rect::from_min_size(outer.left_top(), Vec2::new(card_w, outer.height()));
-        let right = Rect::from_min_size(
-            Pos2::new(outer.right() - card_w, outer.top()),
-            Vec2::new(card_w, outer.height()),
-        );
+        let (left, right, start, end) = {
+            let small_h = outer.height() < 72.0;
+            let v_gap = if small_h {
+                14.0
+            } else {
+                (outer.height() * 0.2).clamp(28.0, 72.0)
+            };
+            let card_h = ((outer.height() - v_gap) * 0.5).max(18.0);
+            let left_rect = Rect::from_min_size(outer.left_top(), Vec2::new(outer.width(), card_h));
+            // Bottom card is always anchored to the bottom edge.
+            let right_rect = Rect::from_min_size(
+                Pos2::new(outer.left(), outer.bottom() - card_h),
+                Vec2::new(outer.width(), card_h),
+            );
+            // Keep extra clearance so the connector line is clearly visible.
+            let s = Pos2::new(left_rect.center().x, left_rect.bottom() + 8.0);
+            let e = Pos2::new(right_rect.center().x, right_rect.top() - 8.0);
+            (left_rect, right_rect, s, e)
+        };
 
         draw_device_card(
             &painter,
@@ -434,20 +442,18 @@ mod app {
             Color32::from_rgb(90, 235, 145),
         );
 
-        let start = Pos2::new(left.right() + 12.0, left.center().y);
-        let end = Pos2::new(right.left() - 12.0, right.center().y);
-        let wire_color = if running {
-            Color32::from_rgb(110, 220, 155)
-        } else {
-            Color32::from_gray(95)
-        };
-        painter.line_segment([start, end], Stroke::new(2.5, wire_color));
+        if !running {
+            painter.line_segment([start, end], Stroke::new(2.0, Color32::from_gray(70)));
+        }
 
         if running {
             for i in 0..3 {
                 let phase = ((time * 0.9) + (i as f32 * 0.33)).fract();
-                let x = egui::lerp(start.x..=end.x, phase);
-                let pulse = Rect::from_center_size(Pos2::new(x, start.y), Vec2::new(8.0, 8.0));
+                let pos = Pos2::new(
+                    egui::lerp(start.x..=end.x, phase),
+                    egui::lerp(start.y..=end.y, phase),
+                );
+                let pulse = Rect::from_center_size(pos, Vec2::new(8.0, 8.0));
                 painter.rect_filled(pulse, CornerRadius::same(4), Color32::from_rgb(120, 255, 180));
             }
         }
@@ -462,6 +468,14 @@ mod app {
         history: &VecDeque<f32>,
         accent: Color32,
     ) {
+        let compact_w = rect.width() < 300.0;
+        let compact_h = rect.height() < 120.0;
+        let show_meter = rect.width() >= 240.0 && rect.height() >= 88.0;
+        let top_pad = if compact_h { 6.0 } else { 10.0 };
+        let name_y = if compact_h { rect.top() + 24.0 } else { rect.top() + 34.0 };
+        let waveform_top = if compact_h { rect.top() + 42.0 } else { rect.top() + 70.0 };
+        let bottom_pad = if compact_h { 8.0 } else { 14.0 };
+
         let bg = Color32::from_rgb(22, 24, 28);
         painter.rect_filled(rect, CornerRadius::same(10), bg);
         painter.rect_stroke(
@@ -471,59 +485,71 @@ mod app {
             StrokeKind::Outside,
         );
 
-        let title_pos = Pos2::new(rect.left() + 12.0, rect.top() + 10.0);
+        let title_pos = Pos2::new(rect.left() + 12.0, rect.top() + top_pad);
         painter.text(
             title_pos,
             Align2::LEFT_TOP,
             title,
-            FontId::proportional(16.0),
+            FontId::proportional(if compact_h { 14.0 } else { 16.0 }),
             Color32::WHITE,
         );
 
-        let name_pos = Pos2::new(rect.left() + 12.0, rect.top() + 34.0);
+        let name_pos = Pos2::new(rect.left() + 12.0, name_y);
+        let name_font = if compact_w { 11.0 } else { 13.0 };
+        let name_limit = if rect.width() < 220.0 {
+            24
+        } else if rect.width() < 300.0 {
+            42
+        } else {
+            84
+        };
         painter.text(
             name_pos,
             Align2::LEFT_TOP,
-            name,
-            FontId::proportional(13.0),
+            truncate_text(name, name_limit),
+            FontId::proportional(name_font),
             Color32::from_gray(190),
         );
 
+        let wave_right_pad = if show_meter { 32.0 } else { 12.0 };
         let waveform = Rect::from_min_max(
-            Pos2::new(rect.left() + 12.0, rect.top() + 70.0),
-            Pos2::new(rect.right() - 32.0, rect.bottom() - 14.0),
+            Pos2::new(rect.left() + 12.0, waveform_top),
+            Pos2::new(rect.right() - wave_right_pad, rect.bottom() - bottom_pad),
         );
-        painter.rect_filled(waveform, CornerRadius::same(6), Color32::from_rgb(16, 17, 20));
-        painter.rect_stroke(
-            waveform,
-            CornerRadius::same(6),
-            Stroke::new(1.0, Color32::from_gray(50)),
-            StrokeKind::Outside,
-        );
+        if waveform.width() > 20.0 && waveform.height() > 14.0 {
+            painter.rect_filled(waveform, CornerRadius::same(6), Color32::from_rgb(16, 17, 20));
+            painter.rect_stroke(
+                waveform,
+                CornerRadius::same(6),
+                Stroke::new(1.0, Color32::from_gray(50)),
+                StrokeKind::Outside,
+            );
+            draw_waveform(painter, waveform.shrink2(Vec2::new(4.0, 4.0)), history, accent);
+        }
 
-        draw_waveform(painter, waveform.shrink2(Vec2::new(4.0, 6.0)), history, accent);
+        if show_meter {
+            let meter_bg = Rect::from_min_max(
+                Pos2::new(rect.right() - 22.0, waveform_top),
+                Pos2::new(rect.right() - 10.0, rect.bottom() - bottom_pad),
+            );
+            painter.rect_filled(meter_bg, CornerRadius::same(5), Color32::from_gray(35));
 
-        let meter_bg = Rect::from_min_max(
-            Pos2::new(rect.right() - 22.0, rect.top() + 70.0),
-            Pos2::new(rect.right() - 10.0, rect.bottom() - 14.0),
-        );
-        painter.rect_filled(meter_bg, CornerRadius::same(5), Color32::from_gray(35));
+            let meter_h = meter_bg.height() * level.clamp(0.0, 1.0);
+            let meter_fill = Rect::from_min_max(
+                Pos2::new(meter_bg.left(), meter_bg.bottom() - meter_h),
+                meter_bg.right_bottom(),
+            );
+            painter.rect_filled(meter_fill, CornerRadius::same(5), accent);
 
-        let meter_h = meter_bg.height() * level.clamp(0.0, 1.0);
-        let meter_fill = Rect::from_min_max(
-            Pos2::new(meter_bg.left(), meter_bg.bottom() - meter_h),
-            meter_bg.right_bottom(),
-        );
-        painter.rect_filled(meter_fill, CornerRadius::same(5), accent);
-
-        let db_text = format!("{:.0}%", level * 100.0);
-        painter.text(
-            Pos2::new(rect.right() - 8.0, rect.top() + 34.0),
-            Align2::RIGHT_TOP,
-            db_text,
-            FontId::proportional(13.0),
-            accent,
-        );
+            let db_text = format!("{:.0}%", level * 100.0);
+            painter.text(
+                Pos2::new(rect.right() - 8.0, name_y),
+                Align2::RIGHT_TOP,
+                db_text,
+                FontId::proportional(12.0),
+                accent,
+            );
+        }
     }
 
     fn draw_waveform(painter: &egui::Painter, rect: Rect, history: &VecDeque<f32>, color: Color32) {
@@ -537,15 +563,24 @@ mod app {
             Stroke::new(1.0, Color32::from_gray(45)),
         );
 
-        let mut points = Vec::with_capacity(history.len());
-        let amp = rect.height() * 0.46;
+        let compact = rect.height() < 78.0;
+        let amp = rect.height() * if compact { 0.48 } else { 0.42 };
         for (i, sample) in history.iter().enumerate() {
             let t = i as f32 / (history.len().saturating_sub(1) as f32);
             let x = egui::lerp(rect.left()..=rect.right(), t);
-            let y = mid - sample.clamp(0.0, 1.0) * amp;
-            points.push(Pos2::new(x, y));
+            let vis = (sample.clamp(0.0, 1.0)).powf(0.45) * if compact { 1.85 } else { 1.55 };
+            let v = vis.clamp(0.0, 1.0);
+            let y1 = mid - v * amp;
+            let y2 = mid + v * amp;
+            painter.line_segment(
+                [Pos2::new(x, y1), Pos2::new(x, y2)],
+                Stroke::new(1.4, color.linear_multiply(if compact { 1.0 } else { 0.9 })),
+            );
+            painter.line_segment(
+                [Pos2::new(x, y1), Pos2::new(x, y2)],
+                Stroke::new(0.8, color.linear_multiply(0.65)),
+            );
         }
-        painter.add(egui::Shape::line(points, Stroke::new(1.8, color)));
     }
 
     fn push_level(history: &mut VecDeque<f32>, level: f32) {
@@ -598,6 +633,23 @@ mod app {
 
     fn load_level(atom: &AtomicU32) -> f32 {
         f32::from_bits(atom.load(Ordering::Relaxed)).clamp(0.0, 1.0)
+    }
+
+    fn truncate_text(input: &str, max_chars: usize) -> String {
+        let count = input.chars().count();
+        if count <= max_chars || max_chars < 2 {
+            return input.to_string();
+        }
+        let keep = max_chars.saturating_sub(1);
+        let mut out = String::new();
+        for (idx, ch) in input.chars().enumerate() {
+            if idx >= keep {
+                break;
+            }
+            out.push(ch);
+        }
+        out.push('…');
+        out
     }
 
     fn default_render_name() -> Result<String> {
